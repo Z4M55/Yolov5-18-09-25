@@ -1,250 +1,251 @@
 # -*- coding: utf-8 -*-
-import os
 import cv2
-import time
-import sys
-import torch
+import streamlit as st
 import numpy as np
 import pandas as pd
-import streamlit as st
+import torch
+import os
+import sys
 
-# ===============================
-# Configuración de página
-# ===============================
+# =========================
+# Configuración de la página
+# =========================
 st.set_page_config(
-    page_title="Detección de Objetos en Tiempo Real",
-    page_icon="🔎",
+    page_title="🤖 Detección de Objetos | Tech Mode",
+    page_icon="🧠",
     layout="wide"
 )
 
-# ===============================
-# Estilos (tema de colores + UI)
-# ===============================
+# =========================
+# Estilos Tech (oscuro + neón)
+# =========================
 st.markdown("""
 <style>
-  :root {
-    --bg: #B7E5CD;
-    --fg: #305669;
-    --fg-contrast: #ffffff;
-    --fg-darker: #24454D;
+  :root{
+    --bg:#0b1220;         /* fondo principal */
+    --panel:#0f182b;      /* paneles/cards */
+    --text:#e6f7ff;       /* texto principal */
+    --muted:#9fb3c8;      /* texto secundario */
+    --accent:#00e5ff;     /* cian neón */
+    --accent2:#00ffa3;    /* verde neón */
+    --danger:#ff4d4f;
   }
-  html, body, [data-testid="stAppViewContainer"], .stApp {
-    background-color: var(--bg) !important;
-    color: var(--fg) !important;
+  html, body, .stApp, [data-testid="stAppViewContainer"]{
+    background: radial-gradient(1000px 600px at 10% 0%, #0f1a30 0%, var(--bg) 60%);
+    color: var(--text) !important;
   }
-  [data-testid="stSidebar"], section[data-testid="stSidebar"] > div {
-    background-color: var(--bg) !important;
-    color: var(--fg) !important;
-    border-left: 1px solid rgba(48,86,105,.15);
+  [data-testid="stSidebar"], section[data-testid="stSidebar"] > div{
+    background: linear-gradient(180deg, #0e1628 0%, #0b1220 100%) !important;
+    color: var(--text) !important;
+    border-right: 1px solid rgba(0,229,255,.15);
   }
-  h1, h2, h3, h4, h5, h6, p, label, span, div, .stMarkdown, .stCaption {
-    color: var(--fg) !important;
+  .block-container{
+    padding-top: 1.2rem;
   }
-  .stButton > button {
-    background-color: var(--fg) !important;
-    color: var(--fg-contrast) !important;
-    border: none !important;
-    border-radius: 8px !important;
+  h1,h2,h3,h4,h5,h6{
+    color: var(--text) !important;
+    font-family: "JetBrains Mono", Consolas, Menlo, monospace;
+    letter-spacing: .5px;
   }
-  .stButton > button:hover { background-color: var(--fg-darker) !important; }
-  .stDataFrame, .stDataFrame [class*="blank"], .stDataFrame [class*="row"] {
-    color: var(--fg) !important;
+  p, label, span, div, .stMarkdown{
+    color: var(--text) !important;
+    font-family: "Inter", system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif;
+  }
+  .stCaption, .st-emotion-cache-12fmjuu, .st-emotion-cache-1lb3x6j{
+    color: var(--muted) !important;
+  }
+  .stButton>button{
+    background: linear-gradient(90deg, var(--accent) 0%, var(--accent2) 100%) !important;
+    color: #00121a !important;
+    border: 0 !important;
+    border-radius: 10px !important;
+    font-weight: 700 !important;
+    box-shadow: 0 0 12px rgba(0,229,255,.5), inset 0 0 0 rgba(0,0,0,0);
+    transition: transform .08s ease-in-out, box-shadow .2s ease-in-out;
+  }
+  .stButton>button:hover{ transform: translateY(-1px); box-shadow: 0 0 16px rgba(0,229,255,.75); }
+  .stSlider label, .stNumberInput label, .stSelectbox label, .stFileUploader label{
+    color: var(--muted) !important;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: .6px;
+    font-size: .85rem;
+  }
+  /* cuadros/expander */
+  .stApp [data-testid="stExpander"]{
+    background: var(--panel) !important;
+    border: 1px solid rgba(0,229,255,.15);
+    border-radius: 12px;
+  }
+  /* DataFrame */
+  .stDataFrame div, .stDataFrame table{
+    color: var(--text) !important;
+  }
+  /* Inputs */
+  .stTextInput>div>div>input, .stNumberInput input, .stFileUploader, .stSelectbox div[data-baseweb="select"]{
+    background: #0f182b !important;
+    color: var(--text) !important;
+    border: 1px solid rgba(0,229,255,.2) !important;
+    border-radius: 10px !important;
   }
 </style>
 """, unsafe_allow_html=True)
 
-# ===============================
-# Carga del modelo (cacheada)
-# ===============================
+# =========================
+# Carga del modelo YOLOv5
+# =========================
 @st.cache_resource
-def load_yolov5_model(model_name='yolov5s', pretrained=True, force_reload=False):
+def load_yolov5_model(model_path='yolov5s.pt'):
     """
-    Carga YOLOv5 vía torch.hub de forma estable y lo envía a cuda/cpu.
+    Intenta cargar con 'yolov5.load'; si falla, usa torch.hub (pretrained).
     """
     try:
-        device = 'cuda' if torch.cuda.is_available() else 'cpu'
-        model = torch.hub.load('ultralytics/yolov5', model_name, pretrained=pretrained, force_reload=force_reload)
-        model.to(device)
-        return model, device
+        import yolov5
+        try:
+            model = yolov5.load(model_path, weights_only=False)
+            return model
+        except TypeError:
+            model = yolov5.load(model_path)
+            return model
     except Exception as e:
-        st.error(f"❌ No se pudo cargar YOLOv5 desde torch.hub: {e}")
-        st.info("🔧 Sugerencia: `pip install torch torchvision torchaudio` (versión acorde a tu entorno)")
-        return None, 'cpu'
+        st.warning(f"⚠️ Fallback torch.hub: {e}")
+        try:
+            device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+            model = torch.hub.load('ultralytics/yolov5', 'yolov5s', pretrained=True)
+            model.to(device)
+            return model
+        except Exception as e2:
+            st.error(f"❌ Error alternativo: {e2}")
+            return None
 
-# ===============================
-# Título + descripción
-# ===============================
-st.title("🔎 Detección de Objetos en Imágenes")
+# =========================
+# Título principal
+# =========================
+st.title("🛰️ Detección de Objetos | Tech Mode")
 st.markdown("""
-Esta aplicación utiliza **YOLOv5** para detectar objetos en imágenes desde **cámara** o **archivo**.  
-💡 **Tip:** Ajusta los parámetros en la barra lateral para mejorar precisión o velocidad.
+Sistema de visión por computador **YOLOv5** para analizar imágenes desde **cámara** o **archivo**.  
+Ajusta parámetros para equilibrar **precisión** y **velocidad**.  
+**Stack:** PyTorch · OpenCV · Streamlit ⚙️
 """)
 
-# ===============================
-# Cargar el modelo
-# ===============================
-with st.spinner("🚀 Cargando modelo YOLOv5..."):
-    model, device = load_yolov5_model()
+# =========================
+# Carga del modelo
+# =========================
+with st.spinner("🔧 Inicializando modelo… Cargando pesos y optimizaciones…"):
+    model = load_yolov5_model()
 
-if not model:
+if model is None:
+    st.error("💥 No se pudo cargar el modelo. Revisa dependencias e inténtalo otra vez.")
     st.stop()
 
-# ===============================
-# Barra lateral: parámetros
-# ===============================
-st.sidebar.title("🎛️ Parámetros")
+# =========================
+# Sidebar: parámetros
+# =========================
+st.sidebar.title("🎛️ Panel de Control")
+model.conf = st.sidebar.slider('Confianza mínima (conf) 🔎', 0.0, 1.0, 0.25, 0.01)
+model.iou  = st.sidebar.slider('Umbral IoU (NMS) 🧩', 0.0, 1.0, 0.45, 0.01)
 
-conf = st.sidebar.slider('Confianza mínima', 0.0, 1.0, 0.25, 0.01)
-iou = st.sidebar.slider('Umbral IoU', 0.0, 1.0, 0.45, 0.01)
-imgsz = st.sidebar.select_slider('Tamaño de entrada (imgsz)', options=[320, 416, 480, 512, 640], value=640)
+with st.sidebar.expander("⚙️ Opciones avanzadas"):
+    try:
+        model.agnostic   = st.checkbox('NMS sin clase (agnostic)', False)
+        model.multi_label= st.checkbox('Múltiples etiquetas por caja', False)
+        model.max_det    = st.number_input('Máx. detecciones', 10, 2000, 1000, 10)
+    except:
+        st.info("🔬 Algunas opciones no están disponibles en esta build.")
 
-# Ajustes del modelo (si existen esos atributos)
-if hasattr(model, "conf"):
-    model.conf = conf
-if hasattr(model, "iou"):
-    model.iou = iou
+# =========================
+# Captura/carga de imagen
+# =========================
+st.markdown("### 📸 Fuente de imagen")
+col1, col2 = st.columns([2,1])
+with col1:
+    picture = st.camera_input("Cam 🎥 (tomar foto)")
+with col2:
+    uploaded = st.file_uploader("Archivo 📂 (JPG/PNG)", type=["jpg", "jpeg", "png"])
 
-st.sidebar.subheader('🧩 Filtrar clases (opcional)')
-all_names = model.names if hasattr(model, "names") else {}
-class_options = [f"{i}: {name}" for i, name in all_names.items()] if isinstance(all_names, dict) else []
-chosen = st.sidebar.multiselect("Selecciona clases a detectar", class_options, default=[])
-if chosen:
-    model.classes = [int(opt.split(":")[0]) for opt in chosen]  # filtra en inferencia
-else:
-    model.classes = None
+if picture or uploaded:
+    image_source = picture if picture else uploaded
+    bytes_data = image_source.getvalue()
+    cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
 
-st.sidebar.caption(f"⚙️ Confianza: {conf:.2f} | IoU: {iou:.2f} | imgsz: {imgsz}")
+    # =========================
+    # Detección
+    # =========================
+    with st.spinner("🧠 Inferencia en curso…"):
+        try:
+            results = model(cv2_img)
+            results.render()  # anota internamente
+        except Exception as e:
+            st.error(f"❌ Error durante la detección: {e}")
+            st.stop()
 
-# ===============================
-# Entradas: cámara o archivo
-# ===============================
-col_cam, col_up = st.columns(2)
-with col_cam:
-    picture = st.camera_input("📷 Capturar imagen")
-with col_up:
-    upload = st.file_uploader("📁 Subir imagen", type=["jpg", "jpeg", "png"])
-
-raw_bytes = None
-if picture is not None:
-    raw_bytes = picture.getvalue()
-elif upload is not None:
-    raw_bytes = upload.getvalue()
-
-if raw_bytes is None:
-    st.info("📸 Captura una imagen con la cámara o 📂 sube un archivo para continuar.")
-    st.stop()
-
-# ===============================
-# Inferencia
-# ===============================
-start = time.time()
-
-# Decodificar en BGR (OpenCV)
-cv2_img = cv2.imdecode(np.frombuffer(raw_bytes, np.uint8), cv2.IMREAD_COLOR)
-
-try:
-    # Nota: en YOLOv5 clásico se puede pasar `size` para imgsz
-    results = model(cv2_img, size=imgsz)
-except Exception as e:
-    st.error(f"❌ Error durante la detección: {e}")
-    st.stop()
-
-infer_sec = time.time() - start
-
-# ===============================
-# Parseo robusto de resultados
-# ===============================
-try:
-    if hasattr(results, "pred"):         # versión clásica
-        preds = results.pred[0]
-    elif hasattr(results, "xyxy"):       # estructura alternativa
-        preds = results.xyxy[0]
-    else:
-        raise AttributeError("Estructura de resultados inesperada.")
-except Exception as e:
-    st.error(f"❌ No se pudieron leer las predicciones: {e}")
-    st.stop()
-
-if preds is not None and len(preds):
-    boxes = preds[:, :4]
-    scores = preds[:, 4]
-    cats   = preds[:, 5]
-else:
-    boxes, scores, cats = [], [], []
-
-# ===============================
-# Render: imagen anotada
-# ===============================
-try:
-    results.render()  # anota internamente
-    # results.ims o results.imgs según versión
+    # Recuperar imagen anotada real (no el frame original)
     annotated = None
-    if hasattr(results, "ims") and len(results.ims):
+    if hasattr(results, "ims") and len(results.ims) > 0:
         annotated = results.ims[0]  # BGR
-    elif hasattr(results, "imgs") and len(results.imgs):
+    elif hasattr(results, "imgs") and len(results.imgs) > 0:
         annotated = results.imgs[0]  # BGR
     if annotated is None:
         annotated = cv2_img
-except Exception:
-    annotated = cv2_img
 
-# Convertir BGR->RGB para mostrar en Streamlit
-annotated_rgb = annotated[:, :, ::-1]
+    annotated_rgb = annotated[:, :, ::-1]
 
-# ===============================
-# Layout de resultados
-# ===============================
-col1, col2 = st.columns(2)
+    st.markdown("## 🧾 Resultados")
+    col_img, col_data = st.columns(2)
 
-with col1:
-    st.subheader("🖼️ Imagen con detecciones")
-    st.image(annotated_rgb, use_container_width=True)
+    with col_img:
+        st.subheader("🖼️ Imagen anotada")
+        st.image(annotated_rgb, use_container_width=True, caption="Cajas y etiquetas por YOLOv5")
 
-with col2:
-    st.subheader("📦 Objetos detectados")
-    if preds is not None and len(preds):
-        label_names = model.names if hasattr(model, "names") else {}
-        # Conteo por clase
-        arr_cats = cats.cpu().numpy() if hasattr(cats, "cpu") else np.array(cats)
-        unique_cats, counts = np.unique(arr_cats, return_counts=True)
+    with col_data:
+        # Parsing robusto
+        try:
+            predictions = results.pred[0]
+        except Exception:
+            predictions = None
 
-        rows = []
-        for cid, cnt in zip(unique_cats, counts):
-            cid = int(cid)
-            mask = (arr_cats == cid)
-            # confianza promedio
-            arr_scores = scores.cpu().numpy() if hasattr(scores, "cpu") else np.array(scores)
-            conf_mean = float(arr_scores[mask].mean()) if mask.any() else 0.0
-            rows.append({
-                "Categoría": label_names.get(cid, str(cid)),
-                "Cantidad": int(cnt),
-                "Confianza promedio": f"{conf_mean:.2f}"
-            })
-        df = pd.DataFrame(rows)
-        st.dataframe(df, use_container_width=True)
-        # Gráfico
-        if not df.empty:
-            st.bar_chart(df.set_index("Categoría")["Cantidad"])
-    else:
-        st.info("🙈 No se detectaron objetos con los parámetros actuales.")
-        st.caption("📉 Prueba a reducir el umbral de confianza en la barra lateral.")
+        if predictions is not None and len(predictions) > 0:
+            boxes = predictions[:, :4]
+            scores = predictions[:, 4]
+            cats   = predictions[:, 5]
+            labels = model.names
 
-# ===============================
-# Métricas + descarga
-# ===============================
-st.caption(f"⏱️ Tiempo de inferencia: {infer_sec*1000:.1f} ms | 💻 Device: {device} | 🖼️ imgsz: {imgsz}")
+            # Conteo por clase
+            category_count = {}
+            for c in cats:
+                idx = int(c.item()) if hasattr(c, "item") else int(c)
+                category_count[idx] = category_count.get(idx, 0) + 1
 
-success, buf = cv2.imencode(".jpg", annotated)  # anotada en BGR
-if success:
-    st.download_button(
-        "📥 Descargar imagen anotada",
-        data=buf.tobytes(),
-        file_name="detecciones.jpg",
-        mime="image/jpeg"
-    )
+            # Tabla de resumen
+            data = []
+            for idx, count in category_count.items():
+                label = labels[idx] if isinstance(labels, dict) else str(idx)
+                # confianza promedio por clase
+                mask = (cats == idx) if not hasattr(cats, "cpu") else (cats.cpu().numpy() == idx)
+                conf_mean = float(scores[mask].mean().item() if hasattr(scores[mask].mean(), "item") else scores[mask].mean())
+                data.append({
+                    "🔖 Clase": label,
+                    "🔢 Cantidad": count,
+                    "📈 Conf. Promedio": f"{conf_mean:.2f}"
+                })
 
-# ===============================
+            df = pd.DataFrame(data)
+            st.dataframe(df, use_container_width=True)
+            if not df.empty:
+                st.bar_chart(df.set_index("🔖 Clase")["🔢 Cantidad"])
+        else:
+            st.info("🙈 Sin detecciones con los parámetros actuales. Prueba a bajar el umbral de confianza.")
+
+else:
+    st.info("💡 Usa la **cámara** o sube un **archivo** para comenzar la detección.")
+
+# =========================
 # Pie de página
-# ===============================
+# =========================
 st.markdown("---")
-st.caption("🤖 App YOLOv5 + Streamlit — detección de objetos en tiempo real, con colores personalizados y UX con emojis.")
+st.markdown("""
+**Stack:** PyTorch · YOLOv5 · OpenCV · Streamlit  
+**Tema:** _Tech masculine_ — fondo oscuro + neón cian/verde.  
+**Tip:** Ajusta `conf`/`IoU` para equilibrar precisión y velocidad. ⚙️
+""")
+st.caption("© 2025 • Vision AI • Modo Tecnológico 🧠")
